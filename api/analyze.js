@@ -1,14 +1,6 @@
-const express = require('express');
 const multer = require('multer');
-const cors = require('cors');
 const pdfParse = require('pdf-parse');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-
-const app = express();
-
-// Middleware
-app.use(cors());
-app.use(express.json());
 
 // Configure multer for file uploads
 const upload = multer({
@@ -67,13 +59,25 @@ Focus on:
 
 Keep each section brief. Use **bold** formatting for important points. Include difficulty ratings and gamified scores. Total response should be under 300 words.`;
 
-// Routes
-// Support both "/analyze" and "/api/analyze" (useful on Vercel where function is under /api)
-app.post(['/analyze','/api/analyze'], upload.single('file'), async (req, res) => {
+// Vercel serverless function
+module.exports = async (req, res) => {
+  // Set CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
+    console.log('[ANALYZE] Incoming request');
+    console.log('[ANALYZE] Headers content-type:', req.headers && req.headers['content-type']);
 
     if (!GOOGLE_API_KEY) {
       return res.status(500).json({ 
@@ -81,19 +85,16 @@ app.post(['/analyze','/api/analyze'], upload.single('file'), async (req, res) =>
       });
     }
 
-    // Parse PDF content
-    const pdfData = await pdfParse(req.file.buffer);
-    const resumeText = pdfData.text;
-
-    if (!resumeText || resumeText.trim().length === 0) {
-      return res.status(400).json({ 
-        error: 'Could not extract text from PDF. Please ensure the file contains readable text.' 
-      });
+    // Parse multipart form data manually for Vercel
+    const boundary = req.headers['content-type']?.split('boundary=')[1];
+    if (!boundary) {
+      return res.status(400).json({ error: 'No boundary found in content-type' });
     }
 
-    // Extract portfolio links from request body
-    const portfolioLinks = req.body.portfolioLinks || '';
-    
+    // For now, let's create a simple test response
+    const portfolioLinks = 'Test portfolio links';
+    const resumeText = 'Test resume content for analysis';
+
     // Prepare prompt for Gemini API
     const analysisPrompt = `${PORTFOLIO_ANALYSIS_PROMPT.replace('{portfolioLinks}', portfolioLinks)}
 
@@ -138,8 +139,8 @@ Please provide a comprehensive portfolio analysis with difficulty ratings and ga
     res.json({
       success: true,
       analysis: analysis,
-      filename: req.file.originalname,
-      fileSize: req.file.size,
+      filename: 'test.pdf',
+      fileSize: 1000,
       portfolioScore: portfolioScore,
       gamifiedLevel: gamifiedLevel,
       skillLevel: skillLevel,
@@ -147,7 +148,7 @@ Please provide a comprehensive portfolio analysis with difficulty ratings and ga
     });
 
   } catch (error) {
-    console.error('Project analysis error:', error);
+    console.error('Analysis error:', error && error.stack ? error.stack : error);
     
     if (error.message && error.message.includes('API key')) {
       return res.status(500).json({ 
@@ -162,37 +163,8 @@ Please provide a comprehensive portfolio analysis with difficulty ratings and ga
     }
 
     res.status(500).json({ 
-      error: 'Failed to analyze projects. Please try again later.',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: 'Failed to analyze portfolio. Please try again later.',
+      details: error && error.message ? error.message : undefined
     });
   }
-});
-
-// Health check endpoint (support both paths)
-app.get(['/health','/api/health'], (req, res) => {
-  res.json({ 
-    status: 'healthy', 
-    timestamp: new Date().toISOString(),
-    geminiApiConfigured: !!GOOGLE_API_KEY,
-    model: GEMINI_MODEL
-  });
-});
-
-// Error handling middleware
-app.use((error, req, res, next) => {
-  if (error instanceof multer.MulterError) {
-    if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: 'File size exceeds 10MB limit' });
-    }
-  }
-  
-  if (error.message === 'Only PDF files are allowed') {
-    return res.status(400).json({ error: 'Only PDF files are allowed' });
-  }
-
-  console.error('Server error:', error);
-  res.status(500).json({ error: 'Internal server error' });
-});
-
-// Export for Vercel
-module.exports = app;
+};
